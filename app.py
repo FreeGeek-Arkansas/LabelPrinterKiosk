@@ -443,9 +443,20 @@ def upload_file():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/print/test', methods=['POST'])
-def test_printer_connection():
-    add_log("Testing USB connectivity to Brother QL printer...")
+@app.route('/api/test_printer', methods=['GET'])
+def test_printer():
+    global PRINTER_IP
+    if PRINTER_IP:
+        import socket
+        try:
+            with socket.create_connection((PRINTER_IP, 9100), timeout=3):
+                pass
+            add_log(f"Connection test SUCCESS: Reached Brother printer at {PRINTER_IP}:9100")
+            return jsonify({"message": f"Successfully connected to printer at {PRINTER_IP}"})
+        except Exception as e:
+            add_log(f"Connection test FAILED: Could not reach {PRINTER_IP}:9100 - {e}", "ERROR")
+            return jsonify({"error": f"Network printer not reachable at {PRINTER_IP}. Error: {e}"}), 400
+
     try:
         import usb.core
         dev = usb.core.find(idVendor=0x04f9)
@@ -471,15 +482,30 @@ def print_label():
     
     if data.get('webusb'):
         printer_url = "usb://0x04f9:0x2049" # Dummy URL, not used for webusb
+        backend = "webusb"
+    elif PRINTER_IP:
+        printer_url = f"tcp://{PRINTER_IP}:9100"
+        backend = "network"
     else:
+        # Fallback to pure Termux USB routing since WebUSB and Network failed
+        import subprocess
         try:
-            import usb.core
-            dev = usb.core.find(idVendor=0x04f9)
-            if dev is None:
-                return jsonify({"error": "No Brother USB printer found. Check connection."}), 400
-            printer_url = f"usb://0x04f9:{hex(dev.idProduct)}"
+            # List devices
+            out = subprocess.check_output(["termux-usb", "-l"]).decode('utf-8').strip()
+            devices = [line for line in out.split('\n') if line.startswith('/dev/bus/usb/')]
+            if not devices:
+                return jsonify({"error": "No USB devices found using termux-usb. Ensure printer is plugged in."}), 400
+            
+            # Request permissions (pops up on Android if needed)
+            device_path = devices[-1] # Usually the last plugged device
+            subprocess.run(["termux-usb", "-r", device_path], check=False)
+            
+            printer_url = device_path
+            backend = "termux_usb"
+        except FileNotFoundError:
+            return jsonify({"error": "termux-usb not installed. Please run 'pkg install termux-api' and install the Termux:API app."}), 500
         except Exception as e:
-            return jsonify({"error": f"USB Backend Error: {e}"}), 400
+            return jsonify({"error": f"Termux USB setup error: {e}"}), 500
 
     import base64
 
@@ -592,12 +618,34 @@ def print_label():
                 "instructions": b64_instructions
             })
 
-        try:
-            from brother_ql.backends.helpers import send
-            send(instructions=instructions, printer_identifier=printer_url, backend_identifier='pyusb', blocking=True)
-        except Exception as usb_err:
-            add_log(f"USB print error: {usb_err}", "ERROR")
-            raise usb_err
+        if backend == "termux_usb":
+            import tempfile, subprocess
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                tmp.write(instructions)
+                tmp_path = tmp.name
+                
+            add_log(f"Executing Termux USB print transfer for {printer_url}...")
+            wrapper_path = os.path.join(os.path.dirname(__file__), "print_wrapper.sh")
+            res = subprocess.run(["termux-usb", "-e", f"{wrapper_path} {tmp_path}", printer_url], capture_output=True)
+            
+            # Clean up the temp instructions file
+            os.remove(tmp_path)
+            
+            if res.returncode != 0:
+                err_msg = res.stderr.decode('utf-8') if res.stderr else res.stdout.decode('utf-8')
+                raise Exception(f"termux-usb execution failed: {err_msg}")
+            
+            out_msg = res.stdout.decode('utf-8')
+            if "Success" not in out_msg:
+                raise Exception(f"USB script failed: {out_msg}")
+        else:
+            try:
+                from brother_ql.backends.helpers import send
+                add_log(f"Sending via backend: {backend} to {printer_url}")
+                send(instructions=instructions, printer_identifier=printer_url, backend_identifier=backend, blocking=True)
+            except Exception as backend_err:
+                add_log(f"Print error ({backend}): {backend_err}", "ERROR")
+                raise backend_err
 
         success_msg = f"Successfully sent {len(images_to_print)} labels to {PRINTER_MODEL} via USB"
         add_log(success_msg)
