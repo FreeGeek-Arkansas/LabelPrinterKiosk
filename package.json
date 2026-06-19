@@ -1,0 +1,17 @@
+{
+  "name": "printerqr",
+  "version": "1.0.0",
+  "description": "```text ================================================================================           O          /|\\      \"WELCOME TO THE MOST HARDCORE PRINT SERVER\"          / \\     ____       _       __       __          __         __    / __ \\_____(_)___  / /_     / /   ____ _/ /_  ___  / /    / /_/ / ___/ / __ \\/ __/    / /   / __ `/ __ \\/ _ \\/ /    / ____/ /  / / / / / /_     / /___/ /_/ / /_/ /  __/ /    /_/   /_/  /_/_/ /_/\\__/    /_____/\\__,_/_.___/\\___/_/",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@babel/cli": "^7.23.0",
+    "@babel/core": "^7.23.2",
+    "@babel/preset-env": "^7.23.2"
+  }
+}
